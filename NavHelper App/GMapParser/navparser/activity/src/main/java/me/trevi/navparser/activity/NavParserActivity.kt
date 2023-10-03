@@ -1,0 +1,182 @@
+/* -*- mode: C++; c-basic-offset: 4; indent-tabs-mode: nil; -*- */
+/*
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ *
+ * Copyright (c) 2020 Marco Trevisan <mail@trevi.me>
+ */
+
+package me.trevi.navparser.activity
+
+import android.app.PendingIntent
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import androidx.navigation.NavController
+import androidx.navigation.findNavController
+import androidx.viewbinding.BuildConfig
+import com.google.android.material.snackbar.Snackbar
+import me.trevi.navparser.lib.NavigationData
+import me.trevi.navparser.service.*
+import timber.log.Timber as tLog
+
+
+
+class NavigationDataModel : ViewModel() {
+    private val mutableData = MutableLiveData<NavigationData>()
+    val liveData: LiveData<NavigationData> get() = mutableData
+    var data: NavigationData?
+        get() = mutableData.value
+        set(value) { mutableData.value = value }
+}
+
+
+open class NavParserActivity : AppCompatActivity() {
+    private var mSnackbar : Snackbar? = null
+    private val mNavDataModel: NavigationDataModel by viewModels()
+    protected var notificationAccess = false
+    val isNavigationActive get() = getNavController().currentDestination?.id == R.id.NavigationFragment
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        if (BuildConfig.DEBUG) {
+            tLog.plant(tLog.DebugTree())
+        }
+
+        tLog.d("${this.javaClass.simpleName} created")
+    }
+
+    protected fun checkNotificationsAccess() {
+        startService(serviceIntent(CHECK_NOTIFICATIONS_ACCESS))
+    }
+
+    private fun serviceIntent(action: String) : Intent {
+        return Intent(applicationContext, NavigationListenerEmitter::class.java).setAction(action)
+    }
+
+    fun stopNavigation() {
+        serviceIntent(STOP_NAVIGATION).also {
+            tLog.d("stopNavigation $it")
+            startService(it)
+        }
+    }
+
+    private fun setServiceListenerIntent(pendingIntent: PendingIntent?) {
+        startService(serviceIntent(SET_INTENT).putExtra(PENDING_INTENT, pendingIntent))
+    }
+
+    private fun startServiceListener() {
+        tLog.d("Start Service Listener")
+        setServiceListenerIntent(createPendingResult(100, Intent(), 0))
+    }
+
+    fun stopServiceListener() {
+        tLog.d("Stopping Service Listener")
+        setServiceListenerIntent(null)
+    }
+
+    private fun getNavController() : NavController {
+        return findNavController(R.id.nav_host_fragment)
+    }
+
+    private fun gotoFragment(fragmentId: Int) {
+        tLog.d("Changing fragment ${getNavController().currentDestination} -> $fragmentId")
+        if (getNavController().currentDestination?.id == fragmentId)
+            return
+
+        when (fragmentId) {
+            R.id.InitFragment -> getNavController().navigate(R.id.action_Navigation_to_Init_fragment)
+            R.id.NavigationFragment -> getNavController().navigate(R.id.action_Init_to_Navigation_fragment)
+        }
+    }
+
+    fun showMissingDataSnackbar() {
+        if (mSnackbar != null) {
+            mSnackbar!!.show()
+            return
+        }
+
+        mSnackbar = Snackbar.make(
+            findViewById(android.R.id.content),
+            R.string.no_navigation_started,
+            Snackbar.LENGTH_INDEFINITE
+        )
+        mSnackbar!!.show()
+    }
+
+    fun hideMissingDataSnackbar() {
+        mSnackbar?.dismiss()
+        mSnackbar = null
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, intent: Intent?) {
+        super.onActivityResult(requestCode, resultCode, intent)
+
+        tLog.d("Got activity result: $intent, ${intent?.extras}, ${intent?.action}")
+        when (intent?.action) {
+
+            NOTIFICATIONS_ACCESS_RESULT -> {
+                intent.getBooleanExtra(NOTIFICATIONS_ACCESS_RESULT, false).also {
+                    notificationAccess = it
+
+                    if (!notificationAccess) {
+                        gotoFragment(R.id.InitFragment)
+                        showMissingNotificationsAccessSnackbar()
+                        tLog.e("No notification access for ${NavigationListenerEmitter::class.qualifiedName}")
+                    }
+                }
+            }
+
+            NAVIGATION_DATA_UPDATED -> {
+                gotoFragment(R.id.NavigationFragment)
+
+                val navData = intent.getParcelableExtra<NavigationData>(NAVIGATION_DATA)
+
+                tLog.v("Got navigation data $navData")
+                mNavDataModel.data = navData
+            }
+
+            NAVIGATION_STARTED -> {
+                gotoFragment(R.id.NavigationFragment)
+            }
+
+            NAVIGATION_STOPPED -> {
+                gotoFragment(R.id.InitFragment)
+            }
+        }
+    }
+
+    protected fun showMissingNotificationsAccessSnackbar() {
+        Snackbar.make(
+            findViewById(android.R.id.content),
+            R.string.missing_permissions,
+            Snackbar.LENGTH_INDEFINITE
+        ).setAction(R.string.action_settings) {
+            this@NavParserActivity.startActivityForResult(
+                Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                0
+            )
+        }.show()
+    }
+
+    override fun onBackPressed() {
+        if (!isNavigationActive)
+            super.onBackPressed()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d("BLUETOOTHTAG","On Start Called")
+        startServiceListener()
+        checkNotificationsAccess()
+    }
+
+
+
+
+}

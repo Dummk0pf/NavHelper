@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        google()
+    }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.namespace == "com.android") {
+                useModule("com.android.tools.build:gradle:${requested.version}")
+            }
+        }
+    }
+}
+
+include ':navparser:activity'
+include ':navparser:websocket'
+include ':app'
+rootProject.name = "NavHelper"
